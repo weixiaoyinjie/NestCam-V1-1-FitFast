@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,9 +19,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP="NestCam_V1_1_Fullscreen_FastConnect_OneUpload.zip"
-          if [ -f "$ZIP" ]; then
-            unzip -oq "$ZIP" -d .
+          if [ -f 'NestCam_V1_1_BuildFix_OneUpload.zip' ]; then
+            unzip -oq 'NestCam_V1_1_BuildFix_OneUpload.zip' -d .
+          elif [ -f 'NestCam_V1_1_Fullscreen_FastConnect_OneUpload.zip' ]; then
+            unzip -oq 'NestCam_V1_1_Fullscreen_FastConnect_OneUpload.zip' -d .
           fi
           test -f settings.gradle
           test -f mobile/src/main/java/com/nestcam/watch8/mobile/MainActivity.java
@@ -34,12 +35,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android 35 build platform
+      - name: Use preinstalled Android SDK (no setup-android download)
         shell: bash
-        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+        run: |
+          set -euo pipefail
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
+          test -f "$SDK_DIR/platforms/android-35/android.jar" || {
+            echo '::error::Android SDK Platform 35 missing on runner.'
+            exit 1
+          }
+          test -x "$SDK_DIR/build-tools/35.0.0/apksigner" || {
+            echo '::error::Android SDK Build Tools 35.0.0 missing on runner.'
+            exit 1
+          }
+          echo "Reusing preinstalled Android SDK: $SDK_DIR"
 
       - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
