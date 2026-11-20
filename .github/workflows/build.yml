@@ -1,0 +1,98 @@
+name: Build NestCam V1.1 Phone and Watch8
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract one-upload source archive when present
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="NestCam_V1_1_Fullscreen_FastConnect_OneUpload.zip"
+          if [ -f "$ZIP" ]; then
+            unzip -oq "$ZIP" -d .
+          fi
+          test -f settings.gradle
+          test -f mobile/src/main/java/com/nestcam/watch8/mobile/MainActivity.java
+          test -f wear/src/main/java/com/nestcam/watch8/wear/WatchActivity.java
+          echo "Using NestCam V1.1 FitFast sources"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 35 build platform
+        shell: bash
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Set up Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Restore original debug signing key (optional)
+        shell: bash
+        env:
+          NESTCAM_OLD_KEYSTORE: ${{ secrets.NESTCAM_ORIGINAL_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -n "$NESTCAM_OLD_KEYSTORE" ]; then
+            mkdir -p "$HOME/.android"
+            printf '%s' "$NESTCAM_OLD_KEYSTORE" | base64 --decode > "$HOME/.android/debug.keystore"
+            chmod 600 "$HOME/.android/debug.keystore"
+            echo 'Using provided existing debug keystore.'
+          else
+            echo 'No original signing keystore configured: Android will generate a NEW debug certificate.'
+            echo 'A different certificate cannot update an existing installation of the same package.'
+          fi
+
+      - name: Build both APKs
+        shell: bash
+        run: gradle --no-daemon --stacktrace :mobile:assembleDebug :wear:assembleDebug
+
+      - name: Verify signing certificates against uploaded working V1 APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED='E23EFA05CCBD84183C0EB941EAA00C9C54955C5E5C2058118DFE639CCCF7A306'
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          for APK in mobile/build/outputs/apk/debug/mobile-debug.apk wear/build/outputs/apk/debug/wear-debug.apk; do
+            ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:lower:]' '[:upper:]' | head -1)
+            echo "APK: $APK"
+            echo "Certificate SHA256: $ACTUAL"
+            if [ "$ACTUAL" != "$EXPECTED" ]; then
+              echo '::warning::The new APK signing certificate differs from the uploaded working V1 APK. Direct update is not possible with this signature.'
+            else
+              echo 'Original certificate matched; normal update requirements still apply.'
+            fi
+          done
+
+      - name: Upload phone APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NestCam-V1_1-Phone-APK
+          path: mobile/build/outputs/apk/debug/mobile-debug.apk
+          if-no-files-found: error
+
+      - name: Upload Watch8 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NestCam-V1_1-Watch8-APK
+          path: wear/build/outputs/apk/debug/wear-debug.apk
+          if-no-files-found: error
